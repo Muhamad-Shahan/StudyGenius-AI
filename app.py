@@ -13,68 +13,24 @@ st.set_page_config(
 def local_css():
     st.markdown("""
     <style>
-    /* FORCE DARK MODE BACKGROUND */
-    .stApp {
-        background-color: #0E1117;
-        color: #FAFAFA;
-    }
-    
-    /* SIDEBAR STYLING */
-    [data-testid="stSidebar"] {
-        background-color: #262730;
-        border-right: 1px solid #333;
-    }
-    
-    /* TEXT HEADERS */
-    h1, h2, h3, .main-title {
-        color: #FFFFFF !important;
-        font-family: 'Helvetica Neue', sans-serif;
-    }
-    
-    /* CUSTOM TITLE */
+    .stApp { background-color: #0E1117; color: #FAFAFA; }
+    [data-testid="stSidebar"] { background-color: #262730; border-right: 1px solid #333; }
+    h1, h2, h3, .main-title { color: #FFFFFF !important; }
     .main-title {
-        font-size: 3rem;
-        font-weight: 700;
-        text-align: center;
+        font-size: 3rem; font-weight: 700; text-align: center;
         background: -webkit-linear-gradient(#eee, #999);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
         margin-bottom: 2rem;
     }
-
-    /* CHAT BUBBLES */
-    /* User Message (Blue Accent) */
-    [data-testid="stChatMessage"]:nth-child(odd) {
-        background-color: #1E2329; 
-        border: 1px solid #333;
-    }
-    /* Assistant Message (Darker) */
-    [data-testid="stChatMessage"]:nth-child(even) {
-        background-color: #2B313E;
-        border: 1px solid #444;
-    }
-
-    /* BUTTON STYLING (Neon Blue Gradient) */
+    [data-testid="stChatMessage"]:nth-child(odd) { background-color: #1E2329; border: 1px solid #333; }
+    [data-testid="stChatMessage"]:nth-child(even) { background-color: #2B313E; border: 1px solid #444; }
     .stButton > button {
         background: linear-gradient(90deg, #00C6FF 0%, #0072FF 100%);
-        color: white;
-        border: none;
-        padding: 0.6rem 1.2rem;
-        border-radius: 8px;
-        font-weight: 600;
-        transition: transform 0.2s;
+        color: white; border: none; padding: 0.6rem 1.2rem;
+        border-radius: 8px; font-weight: 600; transition: transform 0.2s;
     }
-    .stButton > button:hover {
-        transform: scale(1.02);
-        box-shadow: 0 0 15px rgba(0, 114, 255, 0.5);
-    }
-
-    /* INPUT FIELDS */
-    .stTextInput > div > div > input {
-        background-color: #262730;
-        color: white;
-        border: 1px solid #444;
-    }
+    .stButton > button:hover { transform: scale(1.02); box-shadow: 0 0 15px rgba(0, 114, 255, 0.5); }
+    .stTextInput > div > div > input { background-color: #262730; color: white; border: 1px solid #444; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -83,7 +39,6 @@ local_css()
 # --- 3. SIDEBAR ---
 with st.sidebar:
     st.markdown("### ⚙️ Configuration")
-    
     if "HF_TOKEN" in st.secrets:
         hf_token = st.secrets["HF_TOKEN"]
         st.success("✅ API Key Loaded")
@@ -113,6 +68,7 @@ if "messages" not in st.session_state:
 if "vectorstore" in st.session_state:
     tab1, tab2 = st.tabs(["💬 Chat Assistant", "📝 Exam Simulator"])
     
+    # TAB 1: CHAT
     with tab1:
         for message in st.session_state.messages:
             with st.chat_message(message["role"]):
@@ -133,6 +89,7 @@ if "vectorstore" in st.session_state:
                     except Exception as e:
                         st.error(f"System Error: {e}")
 
+    # TAB 2: QUIZ
     with tab2:
         st.markdown("### 🧠 Knowledge Check")
         st.caption("Generate a 3-question quiz to test your retention.")
@@ -141,7 +98,11 @@ if "vectorstore" in st.session_state:
             with st.spinner("👨‍🏫 Drafting Questions..."):
                 try:
                     quiz_chain = rag_engine.get_quiz_chain(st.session_state.vectorstore, st.session_state.llm)
-                    response = quiz_chain.invoke({})
+                    
+                    # --- THE FIX IS HERE ---
+                    # We pass a string query so the retriever knows what to look for.
+                    response = quiz_chain.invoke("Generate a hard quiz about the main concepts")
+                    
                     st.markdown(response)
                 except Exception as e:
                     st.error(f"Quiz Generation Failed: {e}")
