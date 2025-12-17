@@ -1,4 +1,3 @@
-%%writefile study_genius/rag_engine.py
 import os
 import time
 from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace, HuggingFaceEmbeddings
