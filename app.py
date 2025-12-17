@@ -1,75 +1,134 @@
-import streamlit as st
-import rag_engine  # We import the backend we just built!
+%%writefile study_genius/rag_engine.py
+import os
+import time
+from langchain_huggingface import HuggingFaceEndpoint, ChatHuggingFace, HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_community.document_loaders import PyPDFLoader
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import StrOutputParser
+from langchain_core.runnables import RunnablePassthrough
 
-# 1. PAGE CONFIGURATION
-st.set_page_config(page_title="StudyGenius AI", page_icon="🎓")
-st.title("🎓 StudyGenius: Your AI Exam Partner")
+# FALLBACK MODELS
+# If Zephyr fails, we can swap this variable to "mistralai/Mistral-7B-Instruct-v0.3"
+REPO_ID = "HuggingFaceH4/zephyr-7b-beta"
 
-# 2. SIDEBAR: SECURITY & UPLOAD
-with st.sidebar:
-    st.header("⚙️ Configuration")
-    hf_token = st.text_input("Hugging Face Token", type="password", help="Enter your Write Token")
+def get_llm(hf_token):
+    """Sets up the Language Model with error handling"""
+    os.environ["HUGGINGFACEHUB_API_TOKEN"] = hf_token.strip() # .strip() removes accidental spaces!
     
-    st.divider()
-    uploaded_file = st.file_uploader("Upload your Exam PDF", type="pdf")
+    try:
+        llm = HuggingFaceEndpoint(
+            repo_id=REPO_ID,
+            task="text-generation",
+            max_new_tokens=512,
+            do_sample=False,
+            repetition_penalty=1.03,
+            temperature=0.1
+        )
+        return ChatHuggingFace(llm=llm)
+    except Exception as e:
+        # This prints the REAL error to your console so you can see it
+        print(f"❌ Error initializing model: {e}")
+        raise e
+
+def process_document(uploaded_file):
+    """Takes a raw file upload, saves it temporarily, and splits it."""
+    try:
+        # Save the file locally
+        temp_path = f"temp_{uploaded_file.name}"
+        with open(temp_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+
+        # Load and Split
+        loader = PyPDFLoader(temp_path)
+        docs = loader.load()
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100) # Larger chunks for better context
+        chunks = splitter.split_documents(docs)
+
+        # Clean up
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+        return chunks
+    except Exception as e:
+        print(f"❌ Error processing PDF: {e}")
+        return []
+
+def create_vectorstore(chunks):
+    """Turns text chunks into a searchable FAISS database"""
+    if not chunks:
+        return None
+    try:
+        embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+        vectorstore = FAISS.from_documents(chunks, embeddings)
+        return vectorstore
+    except Exception as e:
+        print(f"❌ Error creating vector store: {e}")
+        return None
+
+def get_chat_chain(vectorstore, llm):
+    """Creates the Q&A Chain"""
+    # Safety check
+    if vectorstore is None or llm is None:
+        raise ValueError("Vectorstore or LLM is missing.")
+
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+
+    template = """
+    <|system|>
+    You are a helpful study assistant. Answer the question based strictly on the context below.
+    If the answer is not in the context, say "I don't know".
+    Keep answers concise.
+    </s>
+    <|user|>
+    Context: {context}
+    Question: {question}
+    </s>
+    <|assistant|>
+    """
+    prompt = ChatPromptTemplate.from_template(template)
+
+    def format_docs(docs):
+        return "\n\n".join(doc.page_content for doc in docs)
+
+    return (
+        {"context": retriever | format_docs, "question": RunnablePassthrough()}
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
+
+def get_quiz_chain(vectorstore, llm):
+    """Creates the Quiz Chain"""
+    retriever = vectorstore.as_retriever(search_kwargs={"k": 5})
+
+    quiz_template = """
+    <|system|>
+    You are a Professor. Based on the context provided, generate a 3-question Multiple Choice Quiz.
+    Format:
+    Q1: [Question]
+    A) [Option]
+    B) [Option]
+    C) [Option]
+    D) [Option]
+    Correct Answer: [Option]
     
-    # Button to process the PDF
-    if uploaded_file and hf_token:
-        if st.button("🚀 Analyze Document"):
-            with st.spinner("Reading document... (This might take a moment)"):
-                # Call backend to process PDF
-                chunks = rag_engine.process_document(uploaded_file)
-                
-                # Call backend to build the brain
-                st.session_state.vectorstore = rag_engine.create_vectorstore(chunks)
-                
-                # Initialize the LLM
-                st.session_state.llm = rag_engine.get_llm(hf_token)
-                
-                st.success("Document Analyzed! Ready to chat.")
+    (Repeat for Q2 and Q3)
+    </s>
+    <|user|>
+    Context: {context}
+    Topic: Generate a quiz.
+    </s>
+    <|assistant|>
+    """
+    prompt = ChatPromptTemplate.from_template(quiz_template)
 
-# 3. INITIALIZE CHAT HISTORY
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+    def format_docs(docs):
+        return "\n\n".join(doc.page_content for doc in docs)
 
-# 4. MAIN INTERFACE
-if "vectorstore" in st.session_state:
-    # Create two tabs: One for Chat, One for Quiz
-    tab1, tab2 = st.tabs(["💬 Chat Q&A", "📝 Generate Quiz"])
-    
-    # --- TAB 1: CHAT INTERFACE ---
-    with tab1:
-        # Display previous messages
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
-
-        # Chat Input
-        if prompt := st.chat_input("Ask a question about your PDF..."):
-            # Display user message
-            with st.chat_message("user"):
-                st.markdown(prompt)
-            st.session_state.messages.append({"role": "user", "content": prompt})
-
-            # Generate Answer
-            with st.chat_message("assistant"):
-                chain = rag_engine.get_chat_chain(st.session_state.vectorstore, st.session_state.llm)
-                response = chain.invoke(prompt)
-                st.markdown(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
-
-    # --- TAB 2: QUIZ MODE (Unique Feature) ---
-    with tab2:
-        st.header("Test Your Knowledge")
-        st.write("Click the button below to generate a 3-question quiz based on the document.")
-        
-        if st.button("🎲 Generate Quiz"):
-            with st.spinner("Professor AI is writing questions..."):
-                quiz_chain = rag_engine.get_quiz_chain(st.session_state.vectorstore, st.session_state.llm)
-                # We pass a dummy question because the prompt template expects one, 
-                # but the template ignores it to generate the quiz.
-                quiz = quiz_chain.invoke({}) 
-                st.info(quiz)
-
-else:
-    st.info("👈 Please upload a PDF and enter your API Key in the sidebar to start.")
+    return (
+        {"context": retriever | format_docs}
+        | prompt
+        | llm
+        | StrOutputParser()
+    )
