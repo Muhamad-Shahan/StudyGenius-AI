@@ -1,4 +1,3 @@
-%%writefile study_genius/README.md
 # 🎓 StudyGenius AI
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue)
@@ -75,4 +74,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ---
 
-*Built with ❤️ by [Muhammad Shahan]*
+*Built by [Muhammad Shahan]*
